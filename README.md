@@ -19,26 +19,27 @@ the [stm32f4xx-hal](https://github.com/stm32-rs/stm32f4xx-hal).
 
 This will generate a rust file with the output next to the input file.
 
-The script requires Python 3 to run.
+> [!NOTE]
+> The script requires Python 3 to run.
 
 ## Example
 
 You can read from a register using `read_volatile`, and mask the value with the
 included fields
-```
+```rust
 use core::ptr::read_volatile;
 unsafe { read_volatile(gpioa::PUPDR) & (0b1 << gpioa::pupdr::PUPDR3) }
 ```
 
 You can write to a register using `write_volatile` and use the included fields
 to shift into the correct position
-```
+```rust
 use core::ptr::write_volatile;
 unsafe { write_volatile(gpioa::PUPDR, 0b1 << gpioa::pupdr::PUPDR3); }
 ```
 
 You can combine the two to add to a populated register
-```
+```rust
 use core::ptr::{read_volatile, write_volatile};
 unsafe {
     write_volatile(
