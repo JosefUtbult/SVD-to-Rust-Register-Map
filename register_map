@@ -1,0 +1,178 @@
+#!/bin/python3
+
+import sys
+import os
+from xml.etree import ElementTree as ET
+
+def build_structures(root):
+    bit_width = root.find("./width").text
+    address_type = f"u{bit_width}"
+
+    peripherals = []
+    groups = {}
+    
+    for peripheral in root.findall(".//peripheral"):
+        try:
+            peripheral_name = peripheral.find("./name").text
+            peripheral_base_address = peripheral.find("./baseAddress").text.replace('X', 'x')
+        except AttributeError:
+            print("Failed to get name or base address from peripheral")
+            continue
+
+        try:
+            peripheral_derived_from = peripheral.attrib['derivedFrom']
+            peripheral_group = None
+        except KeyError:
+            peripheral_derived_from = None
+            try:
+                peripheral_group = peripheral.find("./groupName").text
+            except AttributeError:
+                peripheral_group = peripheral_name
+
+        peripherals.append({
+            "name": peripheral_name,
+            "group": peripheral_group,
+            "derived_from": peripheral_derived_from,
+            "address": peripheral_base_address
+        })
+
+        if peripheral_group:
+            if not peripheral_group in groups:
+                groups[peripheral_group] = {}
+
+            for register in peripheral.findall(".//register"):
+                try:
+                    register_name = register.find("./name").text
+                    register_address_offset = register.find("addressOffset").text.replace('X', 'x')
+                except AttributeError:
+                    continue
+
+                if not register_name in groups[peripheral_group]:
+                    groups[peripheral_group][register_name] = register_address_offset
+                elif groups[peripheral_group][register_name] != register_address_offset:
+                    print(f"ERROR: register {register_name} in group {peripheral_group} is duplicate, but has different address offsets ({groups[peripheral_group][register_name]} and {register_address_offset})")
+                    exit(1)
+
+    return (peripherals, groups, address_type)
+
+
+def link_derived_groups(peripherals):
+    for peripheral in peripherals:
+        if peripheral['derived_from'] != None:
+            print(f"checking derived peripheral {peripheral['name']}")
+            derrived_peripheral = peripheral['derived_from']
+            found = False
+            for search_peripheral in peripherals:
+                if search_peripheral['name'] == derrived_peripheral:
+                    peripheral['group'] = search_peripheral['group']
+                    found = True
+                    break
+            if not found:
+                print(f"Error: Unable to find derived peripheral {derrived_peripheral} for {peripheral['name']}")
+                exit(1)
+
+def _calculate_padding(lines):
+    if len(lines[0]) > 2:
+        formated = []
+        for line in lines:
+            formated.append(line[1:])
+
+        res = _calculate_padding(formated)
+        new_lines = []
+        for i in range(len(lines)):
+            new_lines.append([lines[i][0], res[i]])
+
+        lines = new_lines
+
+    length = 0
+    for str1, _ in lines:
+        length = max(length, len(str1))
+
+    out = []
+    for str1, str2 in lines:
+        padding = length - len(str1)
+        line = str1
+        for _ in range(padding):
+            line += " "
+        line += str2
+        out.append(line)
+
+    return out
+
+def output_lines(out, lines):
+    res = _calculate_padding(lines)
+    for line in res:
+        out.write(f"{line}\n")
+
+def write_global_peripherals(out, peripherals):
+    out.write("#[rustfmt::skip]\n")
+    out.write("mod peripherals {\n")
+    lines = []
+    for peripheral in peripherals:
+        peripheral_name = f"{peripheral['name'].upper()}_ADDR"
+        lines.append((f"    pub const {peripheral_name}:", f" {address_type} = {peripheral['address']};"))
+
+    output_lines(out, lines)
+    out.write("}\n\n")
+
+
+def write_groups(out, groups):
+    for group in groups:
+        registers = groups[group]
+        mod_name = f"{group.lower()}_registers"
+
+        out.write("#[rustfmt::skip]\n")
+        out.write(f"mod {mod_name} {{\n")
+        lines = []
+        for register in registers:
+            offset_name = f"{group}_{register.upper()}_ADDR"
+            lines.append((f"    pub const {offset_name}:", f" {address_type} = {registers[register]};"))
+        output_lines(out, lines)
+        out.write("}\n\n")
+
+
+def write_peripherals(oug, peripherals):
+    for peripheral in peripherals:
+        group = peripheral['group']
+        registers = groups[group]
+
+        mod_name = f"{group.lower()}_registers"
+
+        out.write("#[rustfmt::skip]\n")
+        out.write(f"pub mod {peripheral['name'].lower()} {{\n")
+        out.write("    use peripherals;\n")
+        out.write(f"    use {mod_name};\n\n")
+        lines = []
+        for register in registers:
+            peripheral_name = f"peripherals::{peripheral['name'].upper()}_ADDR"
+            offset_name = f"{mod_name}::{group}_{register.upper()}_ADDR"
+            res_name = f"{peripheral['name'].upper()}_{register.upper()}"
+
+            lines.append((f"    pub const {res_name}:", f" *mut {address_type} = ({peripheral_name} + {offset_name})", f" as *mut {address_type};"))
+        output_lines(out, lines)
+        out.write("}\n\n")
+
+if __name__ == "__main__":
+    if len(sys.argv) <= 1:
+        print(f"Usage: register_map <input_file>.svg")
+        exit(1)
+
+    input_file = sys.argv[1]
+    output_file = f"{os.path.splitext(os.path.basename(input_file))[0]}.rs"
+    print(output_file)
+    tree = ET.parse(input_file)
+    out = open(output_file, "w")
+
+    root = tree.getroot()
+    peripherals, groups, address_type = build_structures(root)
+    link_derived_groups(peripherals)
+
+    write_global_peripherals(out, peripherals)
+    write_groups(out, groups)
+    write_peripherals(out, peripherals)
+
+    out.close()
+
+    with open(output_file, 'r') as file:
+        print(file.read())
+# const GPIOA_ADDR: u32 = 0x4002_0000;
