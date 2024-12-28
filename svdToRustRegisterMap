@@ -13,6 +13,11 @@ def format_description(tag):
         description = description.replace('\n', ' ').replace('\r', '')
         description = ' '.join(description.split())
         description = description.capitalize()
+
+        # This is a weird case for some ESP32 SVD files. The description is just "a"...
+        if description == 'A':
+            return None
+        
         return description
 
     except AttributeError:
@@ -47,6 +52,32 @@ def build_field(field, register_name, field_index):
         "description": field_description
     }
 
+def get_dim(tag, tag_name):
+    try:
+        dim_count = tag.find("./dim").text
+        dim_count = int(dim_count)
+    except AttributeError:
+        return None, 0, tag_name
+    except ValueError:
+        print(f'Error: Unable to convert dim count "{dim_count}" to integer for reister {tag_name}')
+        exit(1)
+
+    try:
+        dim_increment = tag.find("./dimIncrement").text
+        if ('0x' in dim_increment or '0X' in dim_increment):
+            dim_increment = int(dim_increment, 16)
+        else:
+            dim_increment = int(dim_increment)
+    except AttributeError:
+        dim_increment = 1
+    except ValueError:
+        print(f'Error: Unable to convert dim increment "{dim_increment}" to integer for reister {tag_name}')
+        exit(1)
+
+    tag_name = tag_name.replace("[%s]", "{s}").replace("%s", "{s}")
+
+    return dim_count, dim_increment, tag_name
+
 
 def build_register(register, groups, peripheral_group, register_index):
     try:
@@ -57,7 +88,7 @@ def build_register(register, groups, peripheral_group, register_index):
         print(f"Error: Unable to get register name and address from SVG in peripheral {peripheral_group}, register {register_index}")
         exit(1)
 
-    check_name(register_name)
+    dim_count, dim_increment, register_name = get_dim(register, register_name)
 
     try:
         register_access = register.find("./access").text
@@ -68,20 +99,40 @@ def build_register(register, groups, peripheral_group, register_index):
     for field in register.findall("./fields/field"):
         fields.append(build_field(field, register_name, len(fields)))
 
-    if not register_name in groups[peripheral_group]:
-        groups[peripheral_group][register_name] = {
-            "address": register_address_offset,
-            "description": register_description,
-            "fields": fields,
-            "access": register_access
-        }
-        return
+    def add_reg(name, address_offset):
+        check_name(name)
+        if not name in groups[peripheral_group]:
+            groups[peripheral_group][name] = {
+                "address": address_offset,
+                "description": register_description,
+                "fields": fields,
+                "access": register_access
+            }
+            return
 
-    if groups[peripheral_group][register_name]['address'] != register_address_offset:
-        print(f"ERROR: register {register_name} in group {peripheral_group} is duplicate, "
-            f"but has different address offsets ({groups[peripheral_group][register_name]['address']} "
-            f"and {register_address_offset})")
-        exit(1)
+        if groups[peripheral_group][name]['address'] != address_offset:
+            print(f"ERROR: register {name} in group {peripheral_group} is duplicate, "
+                f"but has different address offsets ({groups[peripheral_group][name]['address']} "
+                f"and {address_offset})")
+            exit(1)
+
+
+    if dim_count:
+        for index in range(dim_count):
+            # TODO: Handle dimIndex
+            # https://www.disca.upv.es/aperles/arm_cortex_m3/curset/CMSIS/Documentation/SVD/html/group__dim_element_group__gr.html
+            dim_number = index * dim_increment
+            dim_name = register_name.format(s=index)
+            try:
+                dim_address_offset = hex(int(register_address_offset, 16) + dim_number)
+            except ValueError:
+                print(f'Error: Unable to add dim number "{dim_number}" to address "{register_address_offset}" for register {dim_name}')
+                exit(1)
+
+            add_reg(dim_name, dim_address_offset)
+
+    else:
+        add_reg(register_name, register_address_offset)
 
 def build_structures(root):
     bit_width = root.find("./width").text
@@ -260,8 +311,10 @@ def write_fields(out, fields, field_mod):
     for field in fields:
         field_name = field['name'].upper();
 
-        out.write(f"        /// {field['description']}\n")
-        out.write(f"        /// Bit width: {field['width']}\n")
+        if field['description']:
+            out.write(f"        /// {field['description']}\n")
+        if field['width']:
+            out.write(f"        /// Bit width: {field['width']}\n")
         out.write(f"        pub const {field_name}: u8 = {field['offset']};\n")
 
         if field != fields[-1]:
@@ -292,7 +345,9 @@ def write_peripherals(out, peripherals, address_type):
             field_mod = register.lower()
             description = registers[register]['description']
 
-            out.write(f"\n    /// {description}\n")
+            out.write("\n")
+            if description:
+                out.write(f"    /// {description}\n")
             if registers[register]['access']:
                 out.write(f"    /// Access: {registers[register]['access']}\n")
             out.write(f"    pub const {res_name}: *mut {address_type} = ({peripheral_name} + {offset_name}) as *mut {address_type};\n")
