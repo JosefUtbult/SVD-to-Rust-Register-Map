@@ -9,7 +9,10 @@ minimal-abstraction fashion. **This should not be used if you don't know what
 you're doing, as this approach disregards all compile-time and run-time
 securities, in favour of a more manual approach**. If you're not sure about
 this kind of stuff, you should probably be using a full-fetched HAL, such as
-the [stm32f4xx-hal](https://github.com/stm32-rs/stm32f4xx-hal).
+the [stm32f4xx-hal](https://github.com/stm32-rs/stm32f4xx-hal). Another good
+alternative to this method is
+[stm32ral](https://github.com/adamgreig/stm32ral), which supplies a Register
+Access Layer in the form of structs.
 
 ## Usage
 

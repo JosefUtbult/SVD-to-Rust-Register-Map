@@ -196,6 +196,8 @@ def write_readme(out, peripherals, groups, root_name):
     out.write(f"//! this approach disregards all compile-time and run-time securities, in favour of a more manual\n")
     out.write(f"//! approach**. If you're not sure about this kind of stuff, you should probably be using a\n")
     out.write(f"//! full-fetched HAL, such as the [stm32f4xx-hal](https://github.com/stm32-rs/stm32f4xx-hal).\n")
+    out.write(f"//! Another good alternative to this method is [stm32ral](https://github.com/adamgreig/stm32ral), which\n")
+    out.write(f"//! supplies a Register Access Layer in the form of structs.\n")
     out.write(f"//!\n")
     out.write(f"//! **Example:**\n")
     out.write(f"//!\n")
