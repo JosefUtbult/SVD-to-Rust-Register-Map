@@ -2,7 +2,86 @@
 
 import sys
 import os
+import random
+from string import ascii_letters
 from xml.etree import ElementTree as ET
+
+def format_description(tag):
+    try:
+        description = tag.text
+
+        description = description.replace('\n', ' ').replace('\r', '')
+        description = ' '.join(description.split())
+        description = description.capitalize()
+        return description
+
+    except AttributeError:
+        return None
+
+
+def check_name(name):
+    ok_letters = ascii_letters + '_0123456789'
+
+    if not all(character in ok_letters for character in name):
+        print(f'Non-allowed letters in name "{name}"')
+        exit(1)
+
+
+def build_field(field, register_name, field_index):
+    try:
+        field_name = field.find("./name").text
+        field_offset = field.find("./bitOffset").text
+        field_width = field.find("./bitWidth").text
+        field_description = format_description(field.find("./description"))
+        # field_description = ""
+    except AttributeError:
+        print(f"Error: Unable to get field name and offset from SVG in register {register_name}, field {field_index}")
+        exit(1)
+
+    check_name(field_name)
+
+    return {
+        "name": field_name,
+        "offset": field_offset,
+        "width": field_width,
+        "description": field_description
+    }
+
+
+def build_register(register, groups, peripheral_group, register_index):
+    try:
+        register_name = register.find("./name").text
+        register_address_offset = register.find("./addressOffset").text.replace('X', 'x')
+        register_description = format_description(register.find("./description"))
+    except AttributeError:
+        print(f"Error: Unable to get register name and address from SVG in peripheral {peripheral_group}, register {register_index}")
+        exit(1)
+
+    check_name(register_name)
+
+    try:
+        register_access = register.find("./access").text
+    except AttributeError:
+        register_access = None
+
+    fields = []
+    for field in register.findall("./fields/field"):
+        fields.append(build_field(field, register_name, len(fields)))
+
+    if not register_name in groups[peripheral_group]:
+        groups[peripheral_group][register_name] = {
+            "address": register_address_offset,
+            "description": register_description,
+            "fields": fields,
+            "access": register_access
+        }
+        return
+
+    if groups[peripheral_group][register_name]['address'] != register_address_offset:
+        print(f"ERROR: register {register_name} in group {peripheral_group} is duplicate, "
+            f"but has different address offsets ({groups[peripheral_group][register_name]['address']} "
+            f"and {register_address_offset})")
+        exit(1)
 
 def build_structures(root):
     bit_width = root.find("./width").text
@@ -19,6 +98,13 @@ def build_structures(root):
             print("Failed to get name or base address from peripheral")
             continue
 
+        check_name(peripheral_name)
+
+        try:
+            peripheral_desc = format_description(peripheral.find("./description"))
+        except AttributeError:
+            peripheral_desc = None
+
         try:
             peripheral_derived_from = peripheral.attrib['derivedFrom']
             peripheral_group = None
@@ -33,25 +119,18 @@ def build_structures(root):
             "name": peripheral_name,
             "group": peripheral_group,
             "derived_from": peripheral_derived_from,
-            "address": peripheral_base_address
+            "address": peripheral_base_address,
+            "description": peripheral_desc
         })
 
         if peripheral_group:
             if not peripheral_group in groups:
                 groups[peripheral_group] = {}
 
+            counter = 0
             for register in peripheral.findall(".//register"):
-                try:
-                    register_name = register.find("./name").text
-                    register_address_offset = register.find("addressOffset").text.replace('X', 'x')
-                except AttributeError:
-                    continue
-
-                if not register_name in groups[peripheral_group]:
-                    groups[peripheral_group][register_name] = register_address_offset
-                elif groups[peripheral_group][register_name] != register_address_offset:
-                    print(f"ERROR: register {register_name} in group {peripheral_group} is duplicate, but has different address offsets ({groups[peripheral_group][register_name]} and {register_address_offset})")
-                    exit(1)
+                build_register(register, groups, peripheral_group, counter)
+                counter += 1
 
     return (peripherals, groups, address_type)
 
@@ -59,7 +138,6 @@ def build_structures(root):
 def link_derived_groups(peripherals):
     for peripheral in peripherals:
         if peripheral['derived_from'] != None:
-            print(f"checking derived peripheral {peripheral['name']}")
             derrived_peripheral = peripheral['derived_from']
             found = False
             for search_peripheral in peripherals:
@@ -71,52 +149,94 @@ def link_derived_groups(peripherals):
                 print(f"Error: Unable to find derived peripheral {derrived_peripheral} for {peripheral['name']}")
                 exit(1)
 
-def _calculate_padding(lines):
-    if len(lines[0]) > 2:
-        formated = []
-        for line in lines:
-            formated.append(line[1:])
 
-        res = _calculate_padding(formated)
-        new_lines = []
-        for i in range(len(lines)):
-            new_lines.append([lines[i][0], res[i]])
+def write_readme(out, peripherals, groups, root_name):
+    # Use a set seed so that the script uses the same example at every execution
+    seed = 904544808402
+    random.seed(seed)
 
-        lines = new_lines
+    peripheral = random.choice(peripherals)
+    group = groups[peripheral['group']]
+    register_name = random.choice(list(group.keys()))
+    register = group[register_name]
+    field = random.choice(register['fields'])
 
-    length = 0
-    for str1, _ in lines:
-        length = max(length, len(str1))
+    register_full_name = f"{peripheral['name'].lower()}::{register_name}"
+    field_full_name = f"{peripheral['name'].lower()}::{register_name.lower()}::{field['name'].upper()}"
 
-    out = []
-    for str1, str2 in lines:
-        padding = length - len(str1)
-        line = str1
-        for _ in range(padding):
-            line += " "
-        line += str2
-        out.append(line)
+    out.write(f"// +--------------------------------------------------------------------------------+\n")
+    out.write(f"// | MIT License                                                                    |\n")
+    out.write(f"// |                                                                                |\n")
+    out.write(f"// | Copyright (c) 2024 Josef Utbult                                                |\n")
+    out.write(f"// |                                                                                |\n")
+    out.write(f"// | Permission is hereby granted, free of charge, to any person obtaining a copy   |\n")
+    out.write(f"// | of this software and associated documentation files (the \"Software\"), to deal  |\n")
+    out.write(f"// | in the Software without restriction, including without limitation the rights   |\n")
+    out.write(f"// | to use, copy, modify, merge, publish, distribute, sublicense, and/or sell      |\n")
+    out.write(f"// | copies of the Software, and to permit persons to whom the Software is          |\n")
+    out.write(f"// | furnished to do so, subject to the following conditions:                       |\n")
+    out.write(f"// |                                                                                |\n")
+    out.write(f"// | The above copyright notice and this permission notice shall be included in all |\n")
+    out.write(f"// | copies or substantial portions of the Software.                                |\n")
+    out.write(f"// |                                                                                |\n")
+    out.write(f"// | THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     |\n")
+    out.write(f"// | IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       |\n")
+    out.write(f"// | FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE    |\n")
+    out.write(f"// | AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER         |\n")
+    out.write(f"// | LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  |\n")
+    out.write(f"// | OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  |\n")
+    out.write(f"// | SOFTWARE.                                                                      |\n")
+    out.write(f"// +--------------------------------------------------------------------------------+\n")
+    out.write("\n")
+    out.write(f"//! # {root_name} Register Map\n")
+    out.write(f"//!\n")
+    out.write(f"//! This file is auto generated by [svdToRustRegisterMap](https://github.com/JosefUtbult/svdToRustRegisterMap).\n")
+    out.write(f"//! These registry maps can be used for integrating with bare metal hardware in an\n")
+    out.write(f"//! minimal-abstraction fashion. **This should not be used if you don't know what you're doing, as\n")
+    out.write(f"//! this approach disregards all compile-time and run-time securities, in favour of a more manual\n")
+    out.write(f"//! approach**. If you're not sure about this kind of stuff, you should probably be using a\n")
+    out.write(f"//! full-fetched HAL, such as the [stm32f4xx-hal](https://github.com/stm32-rs/stm32f4xx-hal).\n")
+    out.write(f"//!\n")
+    out.write(f"//! **Example:**\n")
+    out.write(f"//!\n")
+    out.write(f"//! You can read from a register using `read_volatile`, and mask the value with the included fields\n")
+    out.write(f"//! ```\n")
+    out.write(f"//! use core::ptr::read_volatile;\n")
+    out.write(f"//! unsafe {{ read_volatile({register_full_name}) & (0b1 << {field_full_name}) }}\n")
+    out.write(f"//! ```\n")
+    out.write(f"//!\n")
+    out.write(f"//! You can write to a register using `write_volatile` and use the included fields to shift into\n")
+    out.write(f"//! the correct position\n")
+    out.write(f"//! ```\n")
+    out.write(f"//! use core::ptr::write_volatile;\n")
+    out.write(f"//! unsafe {{ write_volatile({register_full_name}, 0b1 << {field_full_name}); }}\n")
+    out.write(f"//! ```\n")
+    out.write(f"//!\n")
+    out.write(f"//! You can combine the two to add to a populated register\n")
+    out.write(f"//! ```\n")
+    out.write(f"//! use core::ptr::{{read_volatile, write_volatile}};\n")
+    out.write(f"//! unsafe {{\n")
+    out.write(f"//!     write_volatile(\n")
+    out.write(f"//!         {register_full_name},\n")
+    out.write(f"//!         read_volatile({register_full_name}) | (0b1 << {field_full_name})\n")
+    out.write(f"//!     );\n")
+    out.write(f"//! }}\n")
+    out.write(f"//! ```\n")
+    out.write("\n")
 
-    return out
 
-def output_lines(out, lines):
-    res = _calculate_padding(lines)
-    for line in res:
-        out.write(f"{line}\n")
-
-def write_global_peripherals(out, peripherals):
+def write_global_peripherals(out, peripherals, address_type):
     out.write("#[rustfmt::skip]\n")
     out.write("mod peripherals {\n")
     lines = []
     for peripheral in peripherals:
         peripheral_name = f"{peripheral['name'].upper()}_ADDR"
-        lines.append((f"    pub const {peripheral_name}:", f" {address_type} = {peripheral['address']};"))
+        out.write(f"    pub const {peripheral_name}: {address_type} = {peripheral['address']};\n")
 
-    output_lines(out, lines)
     out.write("}\n\n")
 
 
-def write_groups(out, groups):
+def write_groups(out, groups, address_type):
     for group in groups:
         registers = groups[group]
         mod_name = f"{group.lower()}_registers"
@@ -125,31 +245,58 @@ def write_groups(out, groups):
         out.write(f"mod {mod_name} {{\n")
         lines = []
         for register in registers:
-            offset_name = f"{group}_{register.upper()}_ADDR"
-            lines.append((f"    pub const {offset_name}:", f" {address_type} = {registers[register]};"))
-        output_lines(out, lines)
+            offset_name = f"{register.upper()}_ADDR"
+            out.write(f"    pub const {offset_name}: {address_type} = {registers[register]['address']};\n")
+
         out.write("}\n\n")
 
+def write_fields(out, fields, field_mod):
+    if not len(fields):
+        return
 
-def write_peripherals(oug, peripherals):
+    out.write(f"    pub mod {field_mod} {{\n")
+    for field in fields:
+        field_name = field['name'].upper();
+
+        out.write(f"        /// {field['description']}\n")
+        out.write(f"        /// Bit width: {field['width']}\n")
+        out.write(f"        pub const {field_name}: u8 = {field['offset']};\n")
+
+        if field != fields[-1]:
+            out.write("\n")
+
+    out.write("    }\n")
+
+
+def write_peripherals(out, peripherals, address_type):
     for peripheral in peripherals:
         group = peripheral['group']
         registers = groups[group]
 
         mod_name = f"{group.lower()}_registers"
 
+        if peripheral['description']:
+            out.write(f"/// {peripheral['description']}\n")
+
         out.write("#[rustfmt::skip]\n")
+        out.write("#[allow(unused)]\n")
         out.write(f"pub mod {peripheral['name'].lower()} {{\n")
-        out.write("    use peripherals;\n")
-        out.write(f"    use {mod_name};\n\n")
+        out.write(f"    use super::{{peripherals, {mod_name}}};\n")
         lines = []
         for register in registers:
             peripheral_name = f"peripherals::{peripheral['name'].upper()}_ADDR"
-            offset_name = f"{mod_name}::{group}_{register.upper()}_ADDR"
-            res_name = f"{peripheral['name'].upper()}_{register.upper()}"
+            offset_name = f"{mod_name}::{register.upper()}_ADDR"
+            res_name = register.upper()
+            field_mod = register.lower()
+            description = registers[register]['description']
 
-            lines.append((f"    pub const {res_name}:", f" *mut {address_type} = ({peripheral_name} + {offset_name})", f" as *mut {address_type};"))
-        output_lines(out, lines)
+            out.write(f"\n    /// {description}\n")
+            if registers[register]['access']:
+                out.write(f"    /// Access: {registers[register]['access']}\n")
+            out.write(f"    pub const {res_name}: *mut {address_type} = ({peripheral_name} + {offset_name}) as *mut {address_type};\n")
+
+            write_fields(out, registers[register]['fields'], field_mod)
+
         out.write("}\n\n")
 
 if __name__ == "__main__":
@@ -158,8 +305,7 @@ if __name__ == "__main__":
         exit(1)
 
     input_file = sys.argv[1]
-    output_file = f"{os.path.splitext(os.path.basename(input_file))[0]}.rs"
-    print(output_file)
+    output_file = f"{os.path.splitext(os.path.basename(input_file))[0].lower()}.rs"
     tree = ET.parse(input_file)
     out = open(output_file, "w")
 
@@ -167,12 +313,15 @@ if __name__ == "__main__":
     peripherals, groups, address_type = build_structures(root)
     link_derived_groups(peripherals)
 
-    write_global_peripherals(out, peripherals)
-    write_groups(out, groups)
-    write_peripherals(out, peripherals)
+    root_name = root.find("./name").text
+
+    write_readme(out, peripherals, groups, root_name)
+    write_global_peripherals(out, peripherals, address_type)
+    write_groups(out, groups, address_type)
+    write_peripherals(out, peripherals, address_type)
 
     out.close()
 
-    with open(output_file, 'r') as file:
-        print(file.read())
+    # with open(output_file, 'r') as file:
+    #     print(file.read())
 # const GPIOA_ADDR: u32 = 0x4002_0000;
