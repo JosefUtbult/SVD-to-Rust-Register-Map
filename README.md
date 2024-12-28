@@ -27,6 +27,9 @@ This will generate a rust file with the output next to the input file.
 
 ## Example
 
+An example generated file can be found
+[here](https://github.com/JosefUtbult/Azathoth-Testing/blob/main/bare_metal/src/stm32f401.rs).
+
 You can read from a register using `read_volatile`, and mask the value with the
 included fields
 ```rust
