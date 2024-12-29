@@ -57,9 +57,9 @@ def get_dim(tag, tag_name):
         dim_count = tag.find("./dim").text
         dim_count = int(dim_count)
     except AttributeError:
-        return None, 0, tag_name
+        return None, None, None, tag_name
     except ValueError:
-        print(f'Error: Unable to convert dim count "{dim_count}" to integer for reister {tag_name}')
+        print(f'Error: Unable to convert dim count "{dim_count}" to integer for register {tag_name}')
         exit(1)
 
     try:
@@ -71,12 +71,39 @@ def get_dim(tag, tag_name):
     except AttributeError:
         dim_increment = 1
     except ValueError:
-        print(f'Error: Unable to convert dim increment "{dim_increment}" to integer for reister {tag_name}')
+        print(f'Error: Unable to convert dim increment "{dim_increment}" to integer for register {tag_name}')
         exit(1)
+
+    try:
+        dim_index_raw = tag.find("./dimIndex").text
+
+        # For dim indices on the form "3-6"
+        if '-' in dim_index_raw:
+            dim_index_lower, dim_index_upper = dim_index_raw.split("-")
+
+            try:
+                dim_index_lower = int(dim_index_lower)
+                dim_index_upper = int(dim_index_upper)
+            except ValueError:
+                print(f'Error: Unable iterate dim index from string "{dim_index_raw}" for register {tag_name}')
+                exit(1)
+
+            dim_index = list(range(dim_index_lower, dim_index_upper + 1))
+
+        # For dim indices on the form "A,B,C"
+        else:
+            dim_index = dim_index_raw.split(',')
+
+        if len(dim_index) != dim_count:
+            print(f'Error: Dim indices {dim_index} does not match dim count "{dim_count}" for register {tag_name}')
+            exit(1)
+
+    except AttributeError:
+        dim_index = None
 
     tag_name = tag_name.replace("[%s]", "{s}").replace("%s", "{s}")
 
-    return dim_count, dim_increment, tag_name
+    return dim_count, dim_increment, dim_index, tag_name
 
 
 def build_register(register, groups, peripheral_group, register_index):
@@ -88,7 +115,7 @@ def build_register(register, groups, peripheral_group, register_index):
         print(f"Error: Unable to get register name and address from SVG in peripheral {peripheral_group}, register {register_index}")
         exit(1)
 
-    dim_count, dim_increment, register_name = get_dim(register, register_name)
+    dim_count, dim_increment, dim_index, register_name = get_dim(register, register_name)
 
     try:
         register_access = register.find("./access").text
@@ -119,10 +146,13 @@ def build_register(register, groups, peripheral_group, register_index):
 
     if dim_count:
         for index in range(dim_count):
-            # TODO: Handle dimIndex
-            # https://www.disca.upv.es/aperles/arm_cortex_m3/curset/CMSIS/Documentation/SVD/html/group__dim_element_group__gr.html
             dim_number = index * dim_increment
-            dim_name = register_name.format(s=index)
+
+            if dim_index:
+                dim_name = register_name.format(s=dim_index[index])
+            else:
+                dim_name = register_name.format(s=index)
+
             try:
                 dim_address_offset = hex(int(register_address_offset, 16) + dim_number)
             except ValueError:
