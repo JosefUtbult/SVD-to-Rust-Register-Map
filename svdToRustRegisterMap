@@ -1,10 +1,11 @@
 #!/bin/python3
 
-import sys
 import os
 import random
+import sys
 from string import ascii_letters
 from xml.etree import ElementTree as ET
+
 
 def format_description(tag):
     try:
@@ -164,12 +165,78 @@ def build_register(register, groups, peripheral_group, register_index):
     else:
         add_reg(register_name, register_address_offset)
 
+def filter_by_name(dict_list, name):
+    res = list(filter(lambda instance: instance['name'] == name, dict_list))
+
+    if len(res):
+        return res
+
+    return None
+
+def build_interrupts(interrupts, peripheral, peripheral_name):
+    local_interrupts = peripheral.findall("./interrupt")
+    if local_interrupts is None:
+        return []
+
+    counter = 0
+    for interrupt in local_interrupts:
+        try:
+            interrupt_name = interrupt.find("./name").text
+            check_name(interrupt_name)
+            interrupt_number = interrupt.find("./value").text
+
+            try:
+                interrupt_number = int(interrupt_number)
+            except:
+                print(f"Error: Unable to convert interrupt {interrupt_number} to an integer")
+                exit(1)
+
+            interrupt_description = format_description(interrupt.find("./description"))
+
+            filtered_local_interrupts = filter_by_name(interrupts, interrupt_name)
+            if not filtered_local_interrupts:
+                interrupts.append({
+                    "name": interrupt_name,
+                    "number": interrupt_number,
+                    "description": interrupt_description,
+                    "valid": True
+                })
+            elif filtered_local_interrupts[0]['number'] != interrupt_number:
+                print(f"Error: Duplicate interrupt name {interrupt_name} in {peripheral_name}, "
+                    f"with different interrupt numbers ({interrupt_number} != {filtered_local_interrupts[0]['number']})")
+                exit(1)
+
+        except AttributeError:
+            print(f"Error: Unable to get name or number from interrupt in peripheral {peripheral_name}, index {counter}")
+            exit(1)
+
+        counter += 1
+
+
+def parse_interrupts(interrupts):
+
+    interrupts.sort(key=lambda instance: instance['number'])
+
+    for i in range(interrupts[-1]['number']):
+        exists = len(list(filter(lambda instance: instance['number'] == i, interrupts))) > 0
+        if not exists:
+            interrupts.append({
+                "name": "UNKNOWN",
+                "number": i,
+                "description": "Unknown interrupt",
+                "valid": False
+            })
+
+    interrupts.sort(key=lambda instance: instance['number'])
+
+
 def build_structures(root):
     bit_width = root.find("./width").text
     address_type = f"u{bit_width}"
 
     peripherals = []
     groups = {}
+    interrupts = []
     
     for peripheral in root.findall(".//peripheral"):
         try:
@@ -196,6 +263,8 @@ def build_structures(root):
             except AttributeError:
                 peripheral_group = peripheral_name
 
+        build_interrupts(interrupts, peripheral, peripheral_name)
+
         peripherals.append({
             "name": peripheral_name,
             "group": peripheral_group,
@@ -213,7 +282,9 @@ def build_structures(root):
                 build_register(register, groups, peripheral_group, counter)
                 counter += 1
 
-    return (peripherals, groups, address_type)
+    parse_interrupts(interrupts)
+    
+    return (peripherals, groups, interrupts, address_type)
 
 
 def link_derived_groups(peripherals):
@@ -352,6 +423,24 @@ def write_fields(out, fields, field_mod):
 
     out.write("    }\n")
 
+def write_interrupts(out, interrupts, address_type):
+    out.write("#[rustfmt::skip]\n")
+    out.write("#[allow(unused)]\n")
+    out.write(f"pub mod irq {{\n")
+
+    for interrupt in interrupts:
+        out.write("\n")
+
+        interrupt_description = interrupt['description']
+        if interrupt_description:
+            comment_type = "//" if not interrupt['valid'] else "///"
+            out.write(f"    {comment_type} {interrupt_description}\n")
+
+        comment_out = "//" if not interrupt['valid'] else ""
+        interrupt_name = f"{interrupt['name'].upper()}_IRQ"
+        out.write(f"    {comment_out}pub const {interrupt_name}: {address_type} = {interrupt['number']};\n")
+    out.write("}\n\n")
+
 
 def write_peripherals(out, peripherals, address_type):
     for peripheral in peripherals:
@@ -367,7 +456,7 @@ def write_peripherals(out, peripherals, address_type):
         out.write("#[allow(unused)]\n")
         out.write(f"pub mod {peripheral['name'].lower()} {{\n")
         out.write(f"    use super::{{peripherals, {mod_name}}};\n")
-        lines = []
+
         for register in registers:
             peripheral_name = f"peripherals::{peripheral['name'].upper()}_ADDR"
             offset_name = f"{mod_name}::{register.upper()}_ADDR"
@@ -397,7 +486,7 @@ if __name__ == "__main__":
     out = open(output_file, "w")
 
     root = tree.getroot()
-    peripherals, groups, address_type = build_structures(root)
+    peripherals, groups, interrupts, address_type = build_structures(root)
     link_derived_groups(peripherals)
 
     root_name = root.find("./name").text
@@ -405,6 +494,7 @@ if __name__ == "__main__":
     write_readme(out, peripherals, groups, root_name)
     write_global_peripherals(out, peripherals, address_type)
     write_groups(out, groups, address_type)
+    write_interrupts(out, interrupts, address_type)
     write_peripherals(out, peripherals, address_type)
 
     out.close()
