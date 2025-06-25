@@ -40,6 +40,34 @@ The following is an extract from code generated using an
 Part of the generated source file can be found in [examples/stm32f401.rs](https://github.com/JosefUtbult/SVD-to-Rust-Register-Map/blob/main/examples/stm32f401.rs)
 
 ```rust
+#[rustfmt::skip]
+mod peripherals {
+
+    // ...
+
+    pub const GPIOA_ADDR:                u32 = 0x40020000;
+    pub const I2C3_ADDR:                 u32 = 0x40005C00;
+    pub const I2C2_ADDR:                 u32 = 0x40005800;
+
+    // ...
+}
+
+// ...
+
+#[rustfmt::skip]
+mod gpio_registers {
+
+    // ...
+
+    pub const PUPDR_ADDR:                u32 = 0x00C;
+    pub const IDR_ADDR:                  u32 = 0x010;
+    pub const ODR_ADDR:                  u32 = 0x014;
+
+    // ...
+}
+
+// ...
+
 /// General-purpose i/os
 #[rustfmt::skip]
 #[allow(unused)]
