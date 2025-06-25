@@ -37,7 +37,7 @@ registers fields.
 
 The following is an extract from code generated using an
 [STM32F401 SVD file](https://raw.githubusercontent.com/cmsis-svd/cmsis-svd/9c416c5ff18e7d272a792c13bd235ebe30eef816/data/STMicro/STM32F401.svd).
-
+Part of the generated source file can be found in [examples/stm32f401.rs](https://github.com/JosefUtbult/SVD-to-Rust-Register-Map/blob/main/examples/stm32f401.rs)
 
 ```rust
 /// General-purpose i/os
@@ -114,7 +114,7 @@ use core::ptr::write_volatile;
 unsafe { write_volatile(gpioa::PUPDR, 0b1 << gpioa::pupdr::PUPDR15); }
 ```
 
-And you can combine the two to add to a populated register
+And you can combine the two to set/clear fields in a register
 
 ```rust
 use core::ptr::{read_volatile, write_volatile};
