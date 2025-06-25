@@ -1,2 +1,4 @@
-**.rs
-**.svd
+generateExamples
+*.rs
+*.svd
+!examples/*.rs
