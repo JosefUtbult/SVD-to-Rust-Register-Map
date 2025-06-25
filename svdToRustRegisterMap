@@ -218,6 +218,9 @@ def build_interrupts(interrupts, peripheral, peripheral_name):
 
 def parse_interrupts(interrupts):
 
+    if not len(interrupts):
+        return
+
     interrupts.sort(key=lambda instance: instance['number'])
 
     for i in range(interrupts[-1]['number']):
@@ -503,6 +506,9 @@ def write_fields(lines, fields, field_mod):
 
 
 def write_interrupts(lines, interrupts, address_type):
+    if not len(interrupts):
+        return
+
     lines.append("#[rustfmt::skip]\n")
     lines.append("#[allow(unused)]\n")
     lines.append(f"pub mod irq {{\n")
